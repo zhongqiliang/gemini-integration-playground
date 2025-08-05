@@ -1,0 +1,108 @@
+# .github/workflows/gemini-commit-message.yml
+
+name: 'Gemini Commit Message Generator'
+
+# This workflow is triggered when a new comment is created on a Pull Request.
+on:
+  issue_comment:
+    types: [created]
+
+# This block defines the job that will run.
+jobs:
+  generate_commit_message:
+    # This condition ensures the workflow only runs if the comment is on a PR
+    # and the comment body is exactly '/gemini-commit-message'.
+    if: github.event.issue.pull_request && github.event.comment.body == '/gemini-commit-message'
+    
+    # The workflow will run on the latest version of Ubuntu.
+    runs-on: ubuntu-latest
+    
+    # We need to grant the workflow permission to write comments on pull requests.
+    permissions:
+      pull-requests: write
+
+    steps:
+      # Step 1: Check out the code from the pull request branch.
+      # This is necessary to be able to run git commands on the code.
+      - name: 'Checkout PR Branch'
+        uses: actions/checkout@v4
+
+      # Step 2: Get the code changes (the "diff") from the pull request.
+      # This is the most important piece of information for generating a good commit message.
+      - name: 'Get PR Diff'
+        id: diff
+        run: |
+          # The target branch (e.g., main, develop) is needed to compare against.
+          # We get it by making an API call to the PR details endpoint.
+          target_branch=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" ${{ github.event.issue.pull_request.url }} | jq -r .base.ref)
+          
+          # Fetch the target branch from the remote repository.
+          git fetch origin $target_branch
+          
+          # Generate the diff between the PR branch and the target branch.
+          # The '...' syntax is a git shortcut to find the best common ancestor.
+          diff_content=$(git diff "origin/$target_branch"...)
+          
+          # The following lines save the diff content into a GitHub Actions output variable,
+          # which allows us to use it in later steps.
+          echo "diff_content<<EOF" >> $GITHUB_OUTPUT
+          echo "$diff_content" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # Step 3: Call the Gemini API directly with a detailed prompt.
+      - name: 'Generate Commit Message with Gemini'
+        id: gemini
+        run: |
+          # Using jq to safely build the JSON payload helps prevent syntax errors with multiline strings.
+          # The prompt is passed as an argument to jq.
+          json_payload=$(jq -n \
+            --arg prompt "Act as an expert software engineer. Based on the following pull request details and code diff, please generate a concise and descriptive commit message. 
+            
+            The commit message should follow the Conventional Commits specification (e.g., 'feat: ...', 'fix: ...', 'docs: ...'). It must include:
+            1. A short, imperative subject line of 50 characters or less.
+            2. A blank line after the subject.
+            3. A more detailed body explaining the 'what' and 'why' of the changes.
+
+            **Pull Request URL:** ${{ github.event.issue.html_url }}
+            **Pull Request Title:** ${{ github.event.issue.title }}
+            **Original PR Description:**
+            ${{ github.event.issue.body }}
+
+            **Code Diff to Analyze:**
+            \`\`\`diff
+            ${{ steps.diff.outputs.diff_content }}
+            \`\`\`
+            " \
+            '{ "contents": [ { "parts": [ { "text": $prompt } ] } ] }')
+
+          # Make the API call to the Gemini model using curl.
+          # We use the gemini-1.5-flash-latest model here.
+          api_response=$(curl -s -X POST \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${{ secrets.GEMINI_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "$json_payload")
+
+          # Extract only the text content from the API's JSON response using jq.
+          # The 'jq -r' command outputs the raw string without quotes.
+          # The '// "Error..."' part provides a fallback message if the expected path is not found.
+          gemini_text_response=$(echo "$api_response" | jq -r '.candidates[0].content.parts[0].text // "Error: Could not parse response from Gemini API."')
+
+          # Set the final text as an output variable for the next step to use.
+          # This is the same mechanism the third-party action used.
+          echo "response<<EOF" >> $GITHUB_OUTPUT
+          echo "$gemini_text_response" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # Step 4: Post Gemini's generated commit message back to the PR.
+      # We use the 'github-script' action to easily interact with the GitHub API.
+      - name: 'Post Commit Message as Comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `### 🤖 Gemini Suggested Commit Message\n\n---\n\n${{ steps.gemini.outputs.response }}`;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
