@@ -107,6 +107,12 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$json_payload")
 
+          # --- DEBUGGING STEP ---
+          # Print the raw API response to the logs to see what Gemini is actually returning.
+          echo "--- RAW API RESPONSE ---"
+          echo "$api_response"
+          echo "--- END RAW API RESPONSE ---"
+
           # Extract only the text content from the API's JSON response using jq.
           # The 'jq -r' command outputs the raw string without quotes.
           # The fallback message provides clearer error handling if the response is unexpected.
