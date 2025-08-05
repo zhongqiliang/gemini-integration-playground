@@ -53,7 +53,7 @@ jobs:
         env:
           # Store the multiline prompt in an environment variable to handle special characters safely.
           PROMPT: |
-            Act as an expert software engineer specializing in the Cobalt codebase, which is a fork of Chromium. Your task is to generate a professional and informative Git commit message based on the provided pull request details.
+            Act as an expert software engineer specializing in the Cobalt codebase, which is a fork of Chromium. Your task is to generate a professional and informative Git commit message based on the provided pull request details. The final output should be only the commit message itself, without any extra conversational text or markdown formatting. Do not use backticks (`) in your response.
 
             You must strictly adhere to the following rules:
 
@@ -94,18 +94,22 @@ jobs:
             ${{ github.event.issue.body }}
 
             **Code Diff to Analyze:**
-            ```diff
             ${{ steps.diff.outputs.diff_content }}
-            ```
         run: |
           # Use jq to safely construct the JSON payload, reading the prompt from the environment variable.
           json_payload=$(jq -n --arg prompt "$PROMPT" '{ "contents": [ { "parts": [ { "text": $prompt } ] } ] }')
 
           # Make the API call to the Gemini model using curl.
           api_response=$(curl -s -X POST \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${{ secrets.GEMINI_API_KEY }}" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${{ secrets.GEMINI_API_KEY }}" \
             -H "Content-Type: application/json" \
             -d "$json_payload")
+
+          # --- DEBUGGING STEP ---
+          # Print the raw API response to the logs to see what Gemini is actually returning.
+          echo "--- RAW API RESPONSE ---"
+          echo "$api_response"
+          echo "--- END RAW API RESPONSE ---"
 
           # Extract only the text content from the API's JSON response using jq.
           # The 'jq -r' command outputs the raw string without quotes.
@@ -118,7 +122,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       # Step 4: Post Gemini's generated commit message back to the PR.
-      # This step remains the same and will now receive the valid response.
+      # This step now uses the direct response from the Gemini step.
       - name: 'Post Commit Message as Comment'
         uses: actions/github-script@v7
         with:
