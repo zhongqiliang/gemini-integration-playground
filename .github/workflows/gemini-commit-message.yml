@@ -24,7 +24,7 @@ jobs:
       - name: 'Get PR Diff'
         id: diff
         run: |
-          set -eux
+          # set -eux
           # Fetch the diff content directly from the PR's diff URL.
           diff_content=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3.diff" ${{ github.event.issue.pull_request.url }})
           
@@ -32,6 +32,11 @@ jobs:
           echo "diff_content<<EOF" >> $GITHUB_OUTPUT
           echo "$diff_content" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
+          # --- DEBUGGING STEP ---
+          echo "--- diff content ---"
+          echo "$diff_content"
+          echo "--- END diff content ---"
 
       # Step 2: Call the Gemini API directly with a detailed prompt.
       # This approach avoids third-party actions and gives us full control over the request.
@@ -83,7 +88,7 @@ jobs:
             **Code Diff to Analyze:**
             ${{ steps.diff.outputs.diff_content }}
         run: |
-          set -eux
+          # set -eux
           # Use jq to safely construct the JSON payload, reading the prompt from the environment variable.
           json_payload=$(jq -n --arg prompt "$PROMPT" '{ "contents": [ { "parts": [ { "text": $prompt } ] } ] }')
 
