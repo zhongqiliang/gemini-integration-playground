@@ -40,6 +40,12 @@ jobs:
           # The '...' syntax is a git shortcut to find the best common ancestor.
           diff_content=$(git diff "origin/$target_branch"...)
           
+          # --- DEBUGGING STEP ---
+          # Print the raw diff content to the logs.
+          echo "--- PR DIFF CONTENT ---"
+          echo "$diff_content"
+          echo "--- END PR DIFF CONTENT ---"
+
           # The following lines save the diff content into a GitHub Actions output variable,
           # which allows us to use it in later steps. This method is robust for multiline strings.
           echo "diff_content<<EOF" >> $GITHUB_OUTPUT
@@ -99,9 +105,15 @@ jobs:
           # Use jq to safely construct the JSON payload, reading the prompt from the environment variable.
           json_payload=$(jq -n --arg prompt "$PROMPT" '{ "contents": [ { "parts": [ { "text": $prompt } ] } ] }')
 
+          # --- DEBUGGING STEP ---
+          # Print the JSON payload to the logs.
+          echo "--- JSON PAYLOAD ---"
+          echo "$json_payload"
+          echo "--- END JSON PAYLOAD ---"
+
           # Make the API call to the Gemini model using curl.
           api_response=$(curl -s -X POST \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${{ secrets.GEMINI_API_KEY }}" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${{ secrets.GEMINI_API_KEY }}" \
             -H "Content-Type: application/json" \
             -d "$json_payload")
 
