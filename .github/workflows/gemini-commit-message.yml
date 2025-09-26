@@ -108,11 +108,15 @@ jobs:
       - name: 'Post Commit Message as Comment'
         uses: actions/github-script@v7
         env:
-          GEMINI_RESPONSE: "${{ steps.gemini.outputs.response }}"
+          COMMENT_BODY: |
+            ### 🤖 Gemini Suggested Commit Message
+            ---
+            ```
+            ${{ steps.gemini.outputs.response }}
+            ```
         with:
           script: |
-            const response = process.env.GEMINI_RESPONSE;
-            const body = `### 🤖 Gemini Suggested Commit Message\n\n---\n\n\`\`\`\n${response}\n\`\`\``;
+            const body = process.env.COMMENT_BODY;
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
