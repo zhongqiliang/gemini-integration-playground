@@ -24,7 +24,7 @@ jobs:
         id: diff
         run: |
           set -eux
-          # Inline Logic: Use pull_request URL if available, otherwise fallback to issue URL
+          # Fallback Logic: Use PR URL if available, otherwise use Issue URL (for comments)
           PR_API_URL="${{ github.event.pull_request.url || github.event.issue.pull_request.url }}"
           
           diff_content=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3.diff" "$PR_API_URL")
@@ -36,34 +36,63 @@ jobs:
       # --- Step 2: Call Gemini API ---
       - name: 'Generate Commit Message with Gemini'
         id: gemini
-        # Load data safely into ENV to prevent script injection
+        # Security: Load untrusted data into ENV variables to prevent script injection
         env:
+          PR_URL: ${{ github.event.pull_request.html_url || github.event.issue.html_url }}
           PR_TITLE: ${{ github.event.pull_request.title || github.event.issue.title }}
           PR_BODY: ${{ github.event.pull_request.body || github.event.issue.body }}
           PR_DIFF: ${{ steps.diff.outputs.diff_content }}
         run: |
           set -eux
           
-          SYSTEM_PROMPT="Act as an expert software engineer specializing in the Cobalt codebase (Chromium fork). Generate a professional Git commit message based on the PR details.
-          
-          Rules:
-          1. Tag Prefix: Subject line MUST start with a tag (e.g., 'media:', 'cobalt:').
-          2. Subject: Imperative mood, max 50 chars, no period.
-          3. Body: Explain 'what' and 'why', wrap at 72 chars.
-          4. Output: ONLY the commit message. No markdown backticks.
-          
-          Tags: android, tvos, build, cobalt, evergreen, linux, media, net, posix, starboard, ci, cleanup, docs, feat, fix, refactor, revert, test."
+          # I have preserved your exact PROMPT text here.
+          # I removed the ${{ }} variables from the bottom and will add them safely using jq below.
+          PROMPT_INSTRUCTIONS="Act as an expert software engineer specializing in the Cobalt codebase, which is a fork of Chromium. Your task is to generate a professional and informative Git commit message based on the provided pull request details. The final output should be only the commit message itself, without any extra conversational text or markdown formatting. Do not use backticks (\`) in your response.
 
-          # Use jq to handle JSON construction safely
+          You must strictly adhere to the following rules:
+
+          **Commit Message Structure:**
+          1.  **Tag Prefix:** The subject line MUST be prefixed with a tag followed by a colon (e.g., \"media: Add support for AV1\"). Prefer component tags over type tags.
+          2.  **Subject:** Capitalize the subject line, use the imperative mood, limit it to 50 characters, and do not end it with a period.
+          3.  **Body:** Separate the subject from the body with a blank line. The body should explain the 'what' and 'why' of the change, not the 'how', and wrap at 72 characters.
+
+          **Tag Selection (Prefix the subject line with one of these):**
+          * **Component Tags (Preferred):**
+              * \`android\`: Android-specific changes.
+              * \`tvos\`: tvOS-specific changes.
+              * \`build\`: Changes to the build system (GN files, build scripts).
+              * \`cobalt\`: Changes specific to the Cobalt browser logic.
+              * \`evergreen\`: For Evergreen-specific changes.
+              * \`linux\`: Linux-specific changes.
+              * \`media\`: Changes related to the media pipeline (player, demuxer, etc.).
+              * \`net\`: For networking changes (e.g., QUIC, sockets).
+              * \`posix\`: POSIX-related changes.
+              * \`starboard\`: Changes to the Starboard abstraction layer.
+          * **Type Tags (Use if no component tag applies):**
+              * \`ci\`: Changes to CI/CD workflows.
+              * \`cleanup\`: Code cleanup (e.g., removing unused code, style fixes).
+              * \`docs\`: Documentation updates.
+              * \`feat\`: A new feature.
+              * \`fix\`: A bug fix.
+              * \`refactor\`: Code refactoring without changing functionality.
+              * \`revert\`: Reverting a previous commit.
+              * \`test\`: For changes to tests (e.g., nplb, unit tests).
+
+          Given your expertise with Cobalt/Chromium, infer the context of the changes to select the most relevant tag.
+
+          **Analyze the following pull request information and generate the commit message:**"
+
+          # Use jq to safely combine the instructions with the variables
           json_payload=$(jq -n \
-            --arg sys "$SYSTEM_PROMPT" \
+            --arg instr "$PROMPT_INSTRUCTIONS" \
+            --arg url "$PR_URL" \
             --arg title "$PR_TITLE" \
             --arg body "$PR_BODY" \
             --arg diff "$PR_DIFF" \
             '{
               contents: [{
                 parts: [{
-                  text: ($sys + "\n\nPR Title: " + $title + "\n\nPR Description:\n" + $body + "\n\nCode Diff:\n" + $diff)
+                  text: ($instr + "\n\n**Pull Request URL:** " + $url + "\n**Pull Request Title:** " + $title + "\n**Original PR Description:**\n" + $body + "\n\n**Code Diff to Analyze:**\n" + $diff)
                 }]
               }]
             }')
@@ -105,7 +134,7 @@ jobs:
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              // Inline Logic: Use PR number if available, otherwise fallback to Issue number
+              // Fallback Logic: Use PR number if available, otherwise use Issue number
               issue_number: ${{ github.event.pull_request.number || github.event.issue.number }},
               body: body
             });
