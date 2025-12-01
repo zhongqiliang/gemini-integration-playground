@@ -71,7 +71,7 @@ jobs:
           api_response=$(curl -s -X POST \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
             -H "Content-Type: application/json" \
-            -H "x-goog-api-key: ${{ secrets.GEMINI_API_KEY }}" \
+            -H "x-goog-api-key: ${{ secrets.GEMINI_ACTIONS_API_KEY }}" \
             -d "$json_payload")
 
           gemini_text_response=$(echo "$api_response" | jq -r '.candidates[0].content.parts[0].text // "Error: Could not parse a valid response from the Gemini API. Please check the API response logs in the workflow run."')
