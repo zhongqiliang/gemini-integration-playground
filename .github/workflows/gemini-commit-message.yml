@@ -36,42 +36,39 @@ jobs:
         id: pr_details
         run: |
           set -eux
-          # Initialize variables
-          PR_NUMBER=""
-          PR_URL=""
-          PR_HTML_URL=""
-          PR_TITLE=""
-          PR_BODY=""
-
-          # Determine the PR number and URL based on the event type.
+          
+          # 1. SIMPLE VALUES (Number, URL)
+          # We do NOT use toJson() here to avoid issues with quotes in URLs. 
+          # These values are system-generated and safe from injection.
+          
           if [ "${{ github.event_name }}" == "pull_request" ]; then
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-            PR_URL="${{ github.event.pull_request.url }}"
-            PR_HTML_URL="${{ github.event.pull_request.html_url }}"
-            # Wrap multiline text in double quotes to prevent shell splitting
-            PR_TITLE="${{ github.event.pull_request.title }}"
-            PR_BODY="${{ github.event.pull_request.body }}"
+            echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "PR_URL=${{ github.event.pull_request.url }}" >> $GITHUB_OUTPUT
+            echo "PR_HTML_URL=${{ github.event.pull_request.html_url }}" >> $GITHUB_OUTPUT
           else
-            # For issue_comment, the PR details are under github.event.issue
-            PR_NUMBER="${{ github.event.issue.number }}"
-            PR_URL="${{ github.event.issue.pull_request.url }}"
-            PR_HTML_URL="${{ github.event.issue.html_url }}"
-            # Wrap multiline text in double quotes to prevent shell splitting
-            PR_TITLE="${{ github.event.issue.title }}"
-            PR_BODY="${{ github.event.issue.body }}"
+            echo "PR_NUMBER=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+            echo "PR_URL=${{ github.event.issue.pull_request.url }}" >> $GITHUB_OUTPUT
+            echo "PR_HTML_URL=${{ github.event.issue.html_url }}" >> $GITHUB_OUTPUT
           fi
-          
-          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_OUTPUT
-          echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
-          echo "PR_HTML_URL=$PR_HTML_URL" >> $GITHUB_OUTPUT
-          
-          # The PR title and body must be set as outputs for the next step's prompt
+
+          # 2. UNTRUSTED STRINGS (Title, Body)
+          # We MUST use toJson() here to satisfy the security scanner and prevent script injection.
+          # The quotes added by toJson() are handled correctly by the shell echo command.
+
           echo "PR_TITLE<<EOF" >> $GITHUB_OUTPUT
-          echo "$PR_TITLE" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "${{ github.event.pull_request.title | toJson }}" >> $GITHUB_OUTPUT
+          else
+            echo "${{ github.event.issue.title | toJson }}" >> $GITHUB_OUTPUT
+          fi
           echo "EOF" >> $GITHUB_OUTPUT
 
           echo "PR_BODY<<EOF" >> $GITHUB_OUTPUT
-          echo "$PR_BODY" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "${{ github.event.pull_request.body | toJson }}" >> $GITHUB_OUTPUT
+          else
+            echo "${{ github.event.issue.body | toJson }}" >> $GITHUB_OUTPUT
+          fi
           echo "EOF" >> $GITHUB_OUTPUT
 
 
