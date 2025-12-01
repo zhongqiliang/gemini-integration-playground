@@ -36,20 +36,29 @@ jobs:
         id: pr_details
         run: |
           set -eux
+          # Initialize variables
+          PR_NUMBER=""
+          PR_URL=""
+          PR_HTML_URL=""
+          PR_TITLE=""
+          PR_BODY=""
+
           # Determine the PR number and URL based on the event type.
           if [ "${{ github.event_name }}" == "pull_request" ]; then
-            PR_NUMBER=${{ github.event.pull_request.number }}
-            PR_URL=${{ github.event.pull_request.url }}
-            PR_HTML_URL=${{ github.event.pull_request.html_url }}
-            PR_TITLE=${{ github.event.pull_request.title }}
-            PR_BODY=${{ github.event.pull_request.body }}
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            PR_URL="${{ github.event.pull_request.url }}"
+            PR_HTML_URL="${{ github.event.pull_request.html_url }}"
+            # Wrap multiline text in double quotes to prevent shell splitting
+            PR_TITLE="${{ github.event.pull_request.title }}"
+            PR_BODY="${{ github.event.pull_request.body }}"
           else
             # For issue_comment, the PR details are under github.event.issue
-            PR_NUMBER=${{ github.event.issue.number }}
-            PR_URL=${{ github.event.issue.pull_request.url }}
-            PR_HTML_URL=${{ github.event.issue.html_url }}
-            PR_TITLE=${{ github.event.issue.title }}
-            PR_BODY=${{ github.event.issue.body }}
+            PR_NUMBER="${{ github.event.issue.number }}"
+            PR_URL="${{ github.event.issue.pull_request.url }}"
+            PR_HTML_URL="${{ github.event.issue.html_url }}"
+            # Wrap multiline text in double quotes to prevent shell splitting
+            PR_TITLE="${{ github.event.issue.title }}"
+            PR_BODY="${{ github.event.issue.body }}"
           fi
           
           echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_OUTPUT
