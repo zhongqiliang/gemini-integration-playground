@@ -1,44 +1,38 @@
 name: 'Gemini Commit Message Generator'
 
-# 1. New Trigger Logic
-# This workflow is now triggered when a new Pull Request is opened/reopened,
-# or when a new comment is created on a Pull Request.
+# 1. Trigger Logic
+# Trigger on PR creation, updates, or when a specific comment is made.
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [opened, reopened, synchronize]
   issue_comment:
     types: [created]
 
-# This block defines the job that will run.
 jobs:
   generate_commit_message:
-    # New Condition:
-    # The job runs if:
-    # 1. The event is a 'pull_request' (opened/reopened).
-    # 2. OR the event is an 'issue_comment' AND the comment body is '/generate-commit-message'.
-    if: |
-      github.event_name == 'pull_request' || (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-        github.event.comment.body == '/generate-commit-message'
-      )
+    # 2. Condition to Run
+    # Run if it's a PR event OR an issue_comment event with the specific command.
+    if: >
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == '/generate-commit-message')
 
-    # The workflow will run on the latest version of Ubuntu.
     runs-on: ubuntu-latest
 
-    # We need to grant the workflow permission to write comments on pull requests.
+    # 3. Permissions
+    # Required to post comments on the PR.
     permissions:
+      issues: write
       pull-requests: write
 
     steps:
-      # --- Step 1: Get PR Details (Modified to handle both pull_request and issue_comment events) ---
+      # --- Step 1: Set PR Details (Secured) ---
       - name: 'Set PR Details'
         id: pr_details
         run: |
           set -eux
-          
-          # 1. SIMPLE VALUES
-          # These are safe system identifiers, so we can use them directly.
+
+          # A. Simple Values (Safe System Identifiers)
+          # These are safe to use directly without toJson overhead.
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
             echo "PR_URL=${{ github.event.pull_request.url }}" >> $GITHUB_OUTPUT
@@ -49,8 +43,9 @@ jobs:
             echo "PR_HTML_URL=${{ github.event.issue.html_url }}" >> $GITHUB_OUTPUT
           fi
 
-          # 2. UNTRUSTED STRINGS (Title, Body)
-          # FIX: Use toJson() function syntax, not pipe syntax.
+          # B. Untrusted Strings (Title, Body)
+          # SECURITY FIX: We use ${{ toJson(...) }} to sanitize input.
+          # The function adds quotes automatically, preventing shell injection.
           
           echo "PR_TITLE<<EOF" >> $GITHUB_OUTPUT
           if [ "${{ github.event_name }}" == "pull_request" ]; then
@@ -68,46 +63,22 @@ jobs:
           fi
           echo "EOF" >> $GITHUB_OUTPUT
 
-          # 2. UNTRUSTED STRINGS (Title, Body)
-          # We MUST use toJson() here to satisfy the security scanner and prevent script injection.
-          # The quotes added by toJson() are handled correctly by the shell echo command.
-
-          echo "PR_TITLE<<EOF" >> $GITHUB_OUTPUT
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "${{ github.event.pull_request.title | toJson }}" >> $GITHUB_OUTPUT
-          else
-            echo "${{ github.event.issue.title | toJson }}" >> $GITHUB_OUTPUT
-          fi
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          echo "PR_BODY<<EOF" >> $GITHUB_OUTPUT
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "${{ github.event.pull_request.body | toJson }}" >> $GITHUB_OUTPUT
-          else
-            echo "${{ github.event.issue.body | toJson }}" >> $GITHUB_OUTPUT
-          fi
-          echo "EOF" >> $GITHUB_OUTPUT
-
-
-      # Step 2: Get the code changes (the "diff") from the pull request.
+      # --- Step 2: Get PR Diff ---
       - name: 'Get PR Diff'
         id: diff
-        # Use the PR_URL from the previous step.
         run: |
           set -eux
-          # Fetch the diff content directly from the PR's diff URL.
+          # PR_URL is trusted (from Step 1 system ID), so we use it to fetch the diff.
           diff_content=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3.diff" ${{ steps.pr_details.outputs.PR_URL }})
 
-          # The following lines save the diff content into a GitHub Actions output variable.
           echo "diff_content<<EOF" >> $GITHUB_OUTPUT
           echo "$diff_content" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # Step 3: Call the Gemini API directly with a detailed prompt.
+      # --- Step 3: Call Gemini API ---
       - name: 'Generate Commit Message with Gemini'
         id: gemini
         env:
-          # Store the multiline prompt in an environment variable to handle special characters safely.
           PROMPT: |
             Act as an expert software engineer specializing in the Cobalt codebase, which is a fork of Chromium. Your task is to generate a professional and informative Git commit message based on the provided pull request details. The final output should be only the commit message itself, without any extra conversational text or markdown formatting. Do not use backticks (`) in your response.
 
@@ -153,27 +124,24 @@ jobs:
             ${{ steps.diff.outputs.diff_content }}
         run: |
           set -eux
-          # Use jq to safely construct the JSON payload, reading the prompt from the environment variable.
+          # Use jq to safely construct the JSON payload.
           json_payload=$(jq -n --arg prompt "$PROMPT" '{ "contents": [ { "parts": [ { "text": $prompt } ] } ] }')
 
+          # Call Gemini 2.5 Flash using the Header method for the API Key.
           api_response=$(curl -s -X POST \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
             -H "Content-Type: application/json" \
             -H "x-goog-api-key: ${{ secrets.GEMINI_API_KEY }}" \
             -d "$json_payload")
 
-          # Extract only the text content from the API's JSON response using jq.
-          # The 'jq -r' command outputs the raw string without quotes.
-          # The fallback message provides clearer error handling if the response is unexpected.
+          # Extract response, handling potential errors gracefully.
           gemini_text_response=$(echo "$api_response" | jq -r '.candidates[0].content.parts[0].text // "Error: Could not parse a valid response from the Gemini API. Please check the API response logs in the workflow run."')
 
-          # Set the final text as an output variable for the next step to use.
           echo "response<<EOF" >> $GITHUB_OUTPUT
           echo "$gemini_text_response" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 4. Modified Step 4: Post Commit Message as Comment
-      # This step now includes helpful suggestions for the PR author.
+      # --- Step 4: Post Comment ---
       - name: 'Post Commit Message as Comment'
         uses: actions/github-script@v7
         env:
@@ -203,3 +171,4 @@ jobs:
               issue_number: ${{ steps.pr_details.outputs.PR_NUMBER }},
               body: body
             });
+
