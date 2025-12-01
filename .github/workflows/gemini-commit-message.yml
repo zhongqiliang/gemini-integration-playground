@@ -37,10 +37,8 @@ jobs:
         run: |
           set -eux
           
-          # 1. SIMPLE VALUES (Number, URL)
-          # We do NOT use toJson() here to avoid issues with quotes in URLs. 
-          # These values are system-generated and safe from injection.
-          
+          # 1. SIMPLE VALUES
+          # These are safe system identifiers, so we can use them directly.
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
             echo "PR_URL=${{ github.event.pull_request.url }}" >> $GITHUB_OUTPUT
@@ -50,6 +48,25 @@ jobs:
             echo "PR_URL=${{ github.event.issue.pull_request.url }}" >> $GITHUB_OUTPUT
             echo "PR_HTML_URL=${{ github.event.issue.html_url }}" >> $GITHUB_OUTPUT
           fi
+
+          # 2. UNTRUSTED STRINGS (Title, Body)
+          # FIX: Use toJson() function syntax, not pipe syntax.
+          
+          echo "PR_TITLE<<EOF" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo ${{ toJson(github.event.pull_request.title) }} >> $GITHUB_OUTPUT
+          else
+            echo ${{ toJson(github.event.issue.title) }} >> $GITHUB_OUTPUT
+          fi
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "PR_BODY<<EOF" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo ${{ toJson(github.event.pull_request.body) }} >> $GITHUB_OUTPUT
+          else
+            echo ${{ toJson(github.event.issue.body) }} >> $GITHUB_OUTPUT
+          fi
+          echo "EOF" >> $GITHUB_OUTPUT
 
           # 2. UNTRUSTED STRINGS (Title, Body)
           # We MUST use toJson() here to satisfy the security scanner and prevent script injection.
