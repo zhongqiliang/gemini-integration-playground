@@ -142,9 +142,8 @@ jobs:
           # Use jq to safely construct the JSON payload, reading the prompt from the environment variable.
           json_payload=$(jq -n --arg prompt "$PROMPT" '{ "contents": [ { "parts": [ { "text": $prompt } ] } ] }')
 
-          # Make the API call to the Gemini model using curl.
           api_response=$(curl -s -X POST \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
             -H "Content-Type: application/json" \
             -H "x-goog-api-key: ${{ secrets.GEMINI_API_KEY }}" \
             -d "$json_payload")
