@@ -1,147 +1,86 @@
 name: 'Gemini Commit Message Generator'
 
-# 1. Trigger Logic
-# Trigger on PR creation, updates, or when a specific comment is made.
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened]
   issue_comment:
     types: [created]
 
 jobs:
   generate_commit_message:
-    # 2. Condition to Run
-    # Run if it's a PR event OR an issue_comment event with the specific command.
     if: >
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == '/generate-commit-message')
 
     runs-on: ubuntu-latest
 
-    # 3. Permissions
-    # Required to post comments on the PR.
     permissions:
       issues: write
       pull-requests: write
 
     steps:
-      # --- Step 1: Set PR Details (Secured) ---
-      - name: 'Set PR Details'
-        id: pr_details
-        run: |
-          set -eux
-
-          # A. Simple Values (Safe System Identifiers)
-          # These are safe to use directly without toJson overhead.
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-            echo "PR_URL=${{ github.event.pull_request.url }}" >> $GITHUB_OUTPUT
-            echo "PR_HTML_URL=${{ github.event.pull_request.html_url }}" >> $GITHUB_OUTPUT
-          else
-            echo "PR_NUMBER=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
-            echo "PR_URL=${{ github.event.issue.pull_request.url }}" >> $GITHUB_OUTPUT
-            echo "PR_HTML_URL=${{ github.event.issue.html_url }}" >> $GITHUB_OUTPUT
-          fi
-
-          # B. Untrusted Strings (Title, Body)
-          # SECURITY FIX: We use ${{ toJson(...) }} to sanitize input.
-          # The function adds quotes automatically, preventing shell injection.
-          
-          echo "PR_TITLE<<EOF" >> $GITHUB_OUTPUT
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo ${{ toJson(github.event.pull_request.title) }} >> $GITHUB_OUTPUT
-          else
-            echo ${{ toJson(github.event.issue.title) }} >> $GITHUB_OUTPUT
-          fi
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          echo "PR_BODY<<EOF" >> $GITHUB_OUTPUT
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo ${{ toJson(github.event.pull_request.body) }} >> $GITHUB_OUTPUT
-          else
-            echo ${{ toJson(github.event.issue.body) }} >> $GITHUB_OUTPUT
-          fi
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      # --- Step 2: Get PR Diff ---
+      # --- Step 1: Get PR Diff ---
       - name: 'Get PR Diff'
         id: diff
         run: |
           set -eux
-          # PR_URL is trusted (from Step 1 system ID), so we use it to fetch the diff.
-          diff_content=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3.diff" ${{ steps.pr_details.outputs.PR_URL }})
+          # Inline Logic: Use pull_request URL if available, otherwise fallback to issue URL
+          PR_API_URL="${{ github.event.pull_request.url || github.event.issue.pull_request.url }}"
+          
+          diff_content=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3.diff" "$PR_API_URL")
 
           echo "diff_content<<EOF" >> $GITHUB_OUTPUT
           echo "$diff_content" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # --- Step 3: Call Gemini API ---
+      # --- Step 2: Call Gemini API ---
       - name: 'Generate Commit Message with Gemini'
         id: gemini
+        # Load data safely into ENV to prevent script injection
         env:
-          PROMPT: |
-            Act as an expert software engineer specializing in the Cobalt codebase, which is a fork of Chromium. Your task is to generate a professional and informative Git commit message based on the provided pull request details. The final output should be only the commit message itself, without any extra conversational text or markdown formatting. Do not use backticks (`) in your response.
-
-            You must strictly adhere to the following rules:
-
-            **Commit Message Structure:**
-            1.  **Tag Prefix:** The subject line MUST be prefixed with a tag followed by a colon (e.g., "media: Add support for AV1"). Prefer component tags over type tags.
-            2.  **Subject:** Capitalize the subject line, use the imperative mood, limit it to 50 characters, and do not end it with a period.
-            3.  **Body:** Separate the subject from the body with a blank line. The body should explain the 'what' and 'why' of the change, not the 'how', and wrap at 72 characters.
-
-            **Tag Selection (Prefix the subject line with one of these):**
-            * **Component Tags (Preferred):**
-                * `android`: Android-specific changes.
-                * `tvos`: tvOS-specific changes.
-                * `build`: Changes to the build system (GN files, build scripts).
-                * `cobalt`: Changes specific to the Cobalt browser logic.
-                * `evergreen`: For Evergreen-specific changes.
-                * `linux`: Linux-specific changes.
-                * `media`: Changes related to the media pipeline (player, demuxer, etc.).
-                * `net`: For networking changes (e.g., QUIC, sockets).
-                * `posix`: POSIX-related changes.
-                * `starboard`: Changes to the Starboard abstraction layer.
-            * **Type Tags (Use if no component tag applies):**
-                * `ci`: Changes to CI/CD workflows.
-                * `cleanup`: Code cleanup (e.g., removing unused code, style fixes).
-                * `docs`: Documentation updates.
-                * `feat`: A new feature.
-                * `fix`: A bug fix.
-                * `refactor`: Code refactoring without changing functionality.
-                * `revert`: Reverting a previous commit.
-                * `test`: For changes to tests (e.g., nplb, unit tests).
-
-            Given your expertise with Cobalt/Chromium, infer the context of the changes to select the most relevant tag.
-
-            **Analyze the following pull request information and generate the commit message:**
-
-            **Pull Request URL:** ${{ steps.pr_details.outputs.PR_HTML_URL }}
-            **Pull Request Title:** ${{ steps.pr_details.outputs.PR_TITLE }}
-            **Original PR Description:**
-            ${{ steps.pr_details.outputs.PR_BODY }}
-
-            **Code Diff to Analyze:**
-            ${{ steps.diff.outputs.diff_content }}
+          PR_TITLE: ${{ github.event.pull_request.title || github.event.issue.title }}
+          PR_BODY: ${{ github.event.pull_request.body || github.event.issue.body }}
+          PR_DIFF: ${{ steps.diff.outputs.diff_content }}
         run: |
           set -eux
-          # Use jq to safely construct the JSON payload.
-          json_payload=$(jq -n --arg prompt "$PROMPT" '{ "contents": [ { "parts": [ { "text": $prompt } ] } ] }')
+          
+          SYSTEM_PROMPT="Act as an expert software engineer specializing in the Cobalt codebase (Chromium fork). Generate a professional Git commit message based on the PR details.
+          
+          Rules:
+          1. Tag Prefix: Subject line MUST start with a tag (e.g., 'media:', 'cobalt:').
+          2. Subject: Imperative mood, max 50 chars, no period.
+          3. Body: Explain 'what' and 'why', wrap at 72 chars.
+          4. Output: ONLY the commit message. No markdown backticks.
+          
+          Tags: android, tvos, build, cobalt, evergreen, linux, media, net, posix, starboard, ci, cleanup, docs, feat, fix, refactor, revert, test."
 
-          # Call Gemini 2.5 Flash using the Header method for the API Key.
+          # Use jq to handle JSON construction safely
+          json_payload=$(jq -n \
+            --arg sys "$SYSTEM_PROMPT" \
+            --arg title "$PR_TITLE" \
+            --arg body "$PR_BODY" \
+            --arg diff "$PR_DIFF" \
+            '{
+              contents: [{
+                parts: [{
+                  text: ($sys + "\n\nPR Title: " + $title + "\n\nPR Description:\n" + $body + "\n\nCode Diff:\n" + $diff)
+                }]
+              }]
+            }')
+
           api_response=$(curl -s -X POST \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
             -H "Content-Type: application/json" \
             -H "x-goog-api-key: ${{ secrets.GEMINI_API_KEY }}" \
             -d "$json_payload")
 
-          # Extract response, handling potential errors gracefully.
           gemini_text_response=$(echo "$api_response" | jq -r '.candidates[0].content.parts[0].text // "Error: Could not parse a valid response from the Gemini API. Please check the API response logs in the workflow run."')
 
           echo "response<<EOF" >> $GITHUB_OUTPUT
           echo "$gemini_text_response" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # --- Step 4: Post Comment ---
+      # --- Step 3: Post Comment ---
       - name: 'Post Commit Message as Comment'
         uses: actions/github-script@v7
         env:
@@ -158,17 +97,15 @@ jobs:
 
             **💡 Pro Tips for a Better Commit Message:**
 
-            1.  **Influence the Result:** The commit message quality is highly dependent on the information provided.
-                * To get a better result, add more **contextual details** to the **Pull Request description**. The model analyzes the description and the code diff to generate the message.
-            2.  **Re-run the Generator:** If you update the code or the PR description, you can easily re-run this generation by posting a new comment with the exact text:
-                * `/generate-commit-message`
+            1.  **Influence the Result:** The commit message quality is highly dependent on the information provided in the PR description.
+            2.  **Re-run the Generator:** Post a comment with: `/generate-commit-message`
         with:
           script: |
             const body = process.env.COMMENT_BODY;
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: ${{ steps.pr_details.outputs.PR_NUMBER }},
+              // Inline Logic: Use PR number if available, otherwise fallback to Issue number
+              issue_number: ${{ github.event.pull_request.number || github.event.issue.number }},
               body: body
             });
-
