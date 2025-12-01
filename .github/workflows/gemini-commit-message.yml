@@ -8,6 +8,7 @@ on:
 
 jobs:
   generate_commit_message:
+    # Run condition: PR open/reopen OR comment '/generate-commit-message' on a PR
     if: >
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == '/generate-commit-message')
@@ -24,8 +25,9 @@ jobs:
         id: diff
         run: |
           set -eux
-          # Fallback Logic: Use PR URL if available, otherwise use Issue URL (for comments)
-          PR_API_URL="${{ github.event.pull_request.url || github.event.issue.pull_request.url }}"
+          # Logic: Concatenate both URLs. Since events are exclusive, one will be empty.
+          # PR Event URL + Issue Comment URL
+          PR_API_URL="${{ github.event.pull_request.url }}${{ github.event.issue.pull_request.url }}"
           
           diff_content=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3.diff" "$PR_API_URL")
 
@@ -36,17 +38,16 @@ jobs:
       # --- Step 2: Call Gemini API ---
       - name: 'Generate Commit Message with Gemini'
         id: gemini
-        # Security: Load untrusted data into ENV variables to prevent script injection
+        # Security: Load untrusted data into ENV variables safely.
+        # We use concatenation ${{ A }}${{ B }} instead of || to avoid parser errors.
         env:
-          PR_URL: ${{ github.event.pull_request.html_url || github.event.issue.html_url }}
-          PR_TITLE: ${{ github.event.pull_request.title || github.event.issue.title }}
-          PR_BODY: ${{ github.event.pull_request.body || github.event.issue.body }}
+          PR_URL: ${{ github.event.pull_request.html_url }}${{ github.event.issue.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}${{ github.event.issue.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}${{ github.event.issue.body }}
           PR_DIFF: ${{ steps.diff.outputs.diff_content }}
         run: |
           set -eux
           
-          # I have preserved your exact PROMPT text here.
-          # I removed the ${{ }} variables from the bottom and will add them safely using jq below.
           PROMPT_INSTRUCTIONS="Act as an expert software engineer specializing in the Cobalt codebase, which is a fork of Chromium. Your task is to generate a professional and informative Git commit message based on the provided pull request details. The final output should be only the commit message itself, without any extra conversational text or markdown formatting. Do not use backticks (\`) in your response.
 
           You must strictly adhere to the following rules:
@@ -134,7 +135,7 @@ jobs:
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              // Fallback Logic: Use PR number if available, otherwise use Issue number
-              issue_number: ${{ github.event.pull_request.number || github.event.issue.number }},
+              // Logic: Concatenate numbers. One will be empty, leaving the correct ID.
+              issue_number: ${{ github.event.pull_request.number }}${{ github.event.issue.number }},
               body: body
             });
