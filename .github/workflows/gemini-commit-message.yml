@@ -45,6 +45,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}${{ github.event.issue.title }}
           PR_BODY: ${{ github.event.pull_request.body }}${{ github.event.issue.body }}
           PR_DIFF: ${{ steps.diff.outputs.diff_content }}
+          GEMINI_SECRET: ${{ secrets.GEMINI_ACTIONS_API_KEY }}
         run: |
           set -eux
           
