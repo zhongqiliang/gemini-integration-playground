@@ -28,7 +28,7 @@ jobs:
           # Logic: Concatenate both URLs. Since events are exclusive, one will be empty.
           # PR Event URL + Issue Comment URL
           PR_API_URL="${{ github.event.pull_request.url }}${{ github.event.issue.pull_request.url }}"
-          
+
           diff_content=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3.diff" "$PR_API_URL")
 
           echo "diff_content<<EOF" >> $GITHUB_OUTPUT
@@ -45,9 +45,10 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}${{ github.event.issue.title }}
           PR_BODY: ${{ github.event.pull_request.body }}${{ github.event.issue.body }}
           PR_DIFF: ${{ steps.diff.outputs.diff_content }}
+          GEMINI_SECRET: ${{ secrets.GEMINI_ACTIONS_API_KEY }}
         run: |
           set -eux
-          
+
           PROMPT_INSTRUCTIONS="Act as an expert software engineer specializing in the Cobalt codebase, which is a fork of Chromium. Your task is to generate a professional and informative Git commit message based on the provided pull request details. The final output should be only the commit message itself, without any extra conversational text or markdown formatting. Do not use backticks (\`) in your response.
 
           You must strictly adhere to the following rules:
@@ -99,9 +100,8 @@ jobs:
             }')
 
           api_response=$(curl -s -X POST \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$GEMINI_SECRET" \
             -H "Content-Type: application/json" \
-            -H "x-goog-api-key: ${{ secrets.GEMINI_ACTIONS_API_KEY }}" \
             -d "$json_payload")
 
           gemini_text_response=$(echo "$api_response" | jq -r '.candidates[0].content.parts[0].text // "Error: Could not parse a valid response from the Gemini API. Please check the API response logs in the workflow run."')
@@ -127,7 +127,7 @@ jobs:
 
             **💡 Pro Tips for a Better Commit Message:**
 
-            1.  **Influence the Result:** The commit message quality is highly dependent on the information provided in the PR description.
+            1.  **Influence the Result:** Want to change the output? You can write **custom prompts or instructions** directly in the **Pull Request description**. The model uses that text to generate the message.
             2.  **Re-run the Generator:** Post a comment with: `/generate-commit-message`
         with:
           script: |
